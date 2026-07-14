@@ -43,8 +43,8 @@ try:
     import qadataswap
     HAS_DATASWAP = True
     DATASWAP_VERSION = getattr(qadataswap, 'get_version', lambda: 'unknown')()
-    HAS_ARROW = qadataswap.has_arrow_support()
-except ImportError:
+    HAS_ARROW = qadataswap.has_arrow_support() if hasattr(qadataswap, 'has_arrow_support') else False
+except Exception:
     HAS_DATASWAP = False
     DATASWAP_VERSION = None
     HAS_ARROW = False

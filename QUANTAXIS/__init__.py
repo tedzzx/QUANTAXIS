@@ -340,8 +340,8 @@ try:
         SharedMemoryWriter,
         SharedMemoryReader,
     )
-except ImportError:
-    # QADataBridge未安装，跨语言通信不可用
+except Exception:
+    # QADataBridge未安装或不可用，跨语言通信不可用
     pass
 
 from QUANTAXIS.QAStrategy.qactabase import QAStrategyCtaBase

@@ -159,7 +159,7 @@ setup(
     # 可选依赖: Rust高性能组件
     extras_require={
         'rust': [
-            'qars3>=0.0.45',  # QARS2 Rust核心 (PyO3绑定)
+            'qars3>=0.1.0',  # QARS Rust核心 (PyO3绑定, qa-rs)
             'qadataswap>=0.1.0',  # 跨语言零拷贝通信
         ],
         'performance': [
@@ -168,7 +168,7 @@ setup(
             'msgpack>=1.1.0',  # MessagePack序列化
         ],
         'full': [
-            'qars3>=0.0.45',
+            'qars3>=0.1.0',
             'qadataswap>=0.1.0',
             'polars>=0.20.0,<0.22.0',
             'orjson>=3.10.0',
