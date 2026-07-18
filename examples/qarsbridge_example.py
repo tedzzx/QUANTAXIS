@@ -86,6 +86,10 @@ def example_qars_account():
     positions = account.get_positions()
     print(f"\n当前持仓:\n{positions[['code', 'volume_long']]}")
 
+    # A股 T+1：当日买入不可卖，需结算后才能卖出历史仓
+    account.settle()
+    print("日终结算完成 (volume_long_today -> volume_long_his)")
+
     # 卖出部分持仓
     success = account.sell("000001", 10.8, "2025-01-16", 500)
     print(f"\n卖出000001: {'成功' if success else '失败'}")

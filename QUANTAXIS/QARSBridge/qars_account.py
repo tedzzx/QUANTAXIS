@@ -110,7 +110,10 @@ class QARSAccount:
             >>> account.buy("000001", 10.5, "2025-01-01", 100)
             True
         """
-        return self._account.buy(code, price, date, amount, validate)
+        try:
+            return bool(self._account.buy(code, price, date, amount, validate))
+        except Exception:
+            return False
 
     def sell(self, code: str, price: float, date: str, amount: int,
              validate: bool = True) -> bool:
@@ -127,7 +130,10 @@ class QARSAccount:
         返回:
             bool: 是否成功
         """
-        return self._account.sell(code, price, date, amount, validate)
+        try:
+            return bool(self._account.sell(code, price, date, amount, validate))
+        except Exception:
+            return False
 
     # ========================================================================
     # 期货交易 - Futures Trading
