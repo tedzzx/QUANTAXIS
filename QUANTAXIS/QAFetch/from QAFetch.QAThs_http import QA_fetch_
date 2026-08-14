@@ -1,0 +1,25 @@
+from QAFetch.QAThs_http import QA_fetch_get_stock_list
+import QUANTAXIS as QA
+raw_data = QA.QA_fetch_stock_day_adv('000001', '2020-01-01', '2020-12-31')
+
+
+
+QA_fetch_get_stock_list()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

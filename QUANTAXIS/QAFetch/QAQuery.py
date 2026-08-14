@@ -52,6 +52,18 @@ from QUANTAXIS.QAData.financial_mean import financial_dict
 """
 
 
+def _coerce_volume_series(frame: DataFrame):
+    """兼容 TDX 的 ``vol`` 与 THS 的 ``volume`` 字段。"""
+
+    if "volume" in frame.columns and "vol" in frame.columns:
+        return frame["volume"].where(frame["volume"].notna(), frame["vol"])
+    if "vol" in frame.columns:
+        return frame["vol"]
+    if "volume" in frame.columns:
+        return frame["volume"]
+    return 0
+
+
 def QA_fetch_stock_day(
     code,
     start,
@@ -98,7 +110,7 @@ def QA_fetch_stock_day(
         res = pd.DataFrame([item for item in cursor])
         try:
             res = res.assign(
-                volume=res.vol,
+                volume=_coerce_volume_series(res),
                 date=pd.to_datetime(res.date, utc=False)
             ).drop_duplicates((['date',
                                 'code'])).query('volume>1').set_index(
@@ -116,7 +128,7 @@ def QA_fetch_stock_day(
                               'amount',
                               'date'
                           ]]
-        except:
+        except Exception:
             res = None
         if format in ['P', 'p', 'pandas', 'pd']:
             return res
@@ -229,7 +241,7 @@ def QA_fetch_stock_min(
     res = pd.DataFrame([item for item in cursor])
     try:
         res = res.assign(
-            volume=res.vol,
+            volume=_coerce_volume_series(res),
             datetime=pd.to_datetime(res.datetime, utc=False)
         ).query('volume>1').drop_duplicates(['datetime',
                                              'code']).set_index(
@@ -296,7 +308,7 @@ def QA_fetch_stock_transaction(
     res = pd.DataFrame([item for item in cursor])
     try:
         res = res.assign(
-            volume=res.vol,
+            volume=_coerce_volume_series(res),
             datetime=pd.to_datetime(res.datetime, utc=False)
         ).query('volume>1').drop_duplicates(['datetime',
                                              'code']).set_index(
@@ -363,7 +375,7 @@ def QA_fetch_index_transaction(
     res = pd.DataFrame([item for item in cursor])
     try:
         res = res.assign(
-            volume=res.vol,
+            volume=_coerce_volume_series(res),
             datetime=pd.to_datetime(res.datetime, utc=False)
         ).query('volume>1').drop_duplicates(['datetime',
                                              'code']).set_index(
@@ -401,7 +413,8 @@ def QA_fetch_stock_list(collections=DATABASE.stock_list):
     return pd.DataFrame([item for item in collections.find()]).drop(
         '_id',
         axis=1,
-        inplace=False
+        inplace=False,
+        errors='ignore'
     ).set_index(
         'code',
         drop=False
@@ -414,7 +427,8 @@ def QA_fetch_etf_list(collections=DATABASE.etf_list):
     return pd.DataFrame([item for item in collections.find()]).drop(
         '_id',
         axis=1,
-        inplace=False
+        inplace=False,
+        errors='ignore'
     ).set_index(
         'code',
         drop=False
@@ -426,7 +440,8 @@ def QA_fetch_index_list(collections=DATABASE.index_list):
     return pd.DataFrame([item for item in collections.find()]).drop(
         '_id',
         axis=1,
-        inplace=False
+        inplace=False,
+        errors='ignore'
     ).set_index(
         'code',
         drop=False
@@ -439,7 +454,8 @@ def QA_fetch_stock_terminated(collections=DATABASE.stock_terminated):
     return pd.DataFrame([item for item in collections.find()]).drop(
         '_id',
         axis=1,
-        inplace=False
+        inplace=False,
+        errors='ignore'
     ).set_index(
         'code',
         drop=False
@@ -582,7 +598,7 @@ def QA_fetch_index_day(
         res = pd.DataFrame([item for item in cursor])
         try:
             res = res.assign(
-                volume=res.vol,
+                volume=_coerce_volume_series(res),
                 date=pd.to_datetime(res.date, utc=False)
             ).drop_duplicates((['date',
                                 'code'])).set_index(
@@ -656,7 +672,7 @@ def QA_fetch_index_min(
     res = pd.DataFrame([item for item in cursor])
     try:
         res = res.assign(
-            volume=res.vol,
+            volume=_coerce_volume_series(res),
             datetime=pd.to_datetime(res.datetime, utc=False)
         ).query('volume>1').drop_duplicates(['datetime',
                                              'code']).set_index(
@@ -862,7 +878,8 @@ def QA_fetch_future_list(collections=DATABASE.future_list):
     return pd.DataFrame([item for item in collections.find()]).drop(
         '_id',
         axis=1,
-        inplace=False
+        inplace=False,
+        errors='ignore'
     ).set_index(
         'code',
         drop=False

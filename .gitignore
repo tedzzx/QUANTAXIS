@@ -117,6 +117,9 @@ celerybeat-schedule
 
 # dotenv
 .env
+config/ths_http.ini
+config/rqdatac.ini
+config/eq.ini
 
 # virtualenv
 venv/

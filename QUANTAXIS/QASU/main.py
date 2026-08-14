@@ -21,6 +21,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from types import ModuleType
+
 from QUANTAXIS.QAFetch.QAQuery import QA_fetch_stock_list
 # from QUANTAXIS.QASU import crawl_eastmoney as crawl_eastmoney_file
 from QUANTAXIS.QASU import save_tdx as stdx
@@ -29,6 +31,7 @@ from QUANTAXIS.QASU import save_tdx_file as tdx_file
 from QUANTAXIS.QASU import save_gm as sgm
 from QUANTAXIS.QASU import save_jq as sjq
 from QUANTAXIS.QASU import save_tushare as sts
+from QUANTAXIS.QASU import save_ths as sths
 from QUANTAXIS.QASU import save_financialfiles
 from QUANTAXIS.QAUtil import DATABASE, print_used_time
 import time
@@ -38,7 +41,11 @@ import time
 # from QUANTAXIS.QASU import crawl_jrj_stock_divyield as save_stock_divyield
 
 
-def QA_SU_save_stock_info(engine, client=DATABASE):
+def QA_SU_save_stock_info(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock info
 
     Arguments:
@@ -48,7 +55,7 @@ def QA_SU_save_stock_info(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_stock_info(client=client)
 
 
@@ -67,7 +74,11 @@ def QA_SU_save_stock_info_tushare(engine="tushare", client=DATABASE):
     pass
 
 
-def QA_SU_save_stock_list(engine, client=DATABASE):
+def QA_SU_save_stock_list(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock_list
 
     Arguments:
@@ -77,7 +88,7 @@ def QA_SU_save_stock_list(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_stock_list(client=client)
 
 
@@ -87,7 +98,11 @@ def QA_SU_save_stock_list_tushare(client=DATABASE):
     QA_SU_save_stock_list_to_stock_list(client=client)
 
 
-def QA_SU_save_index_list(engine, client=DATABASE):
+def QA_SU_save_index_list(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save index_list
 
     Arguments:
@@ -97,11 +112,15 @@ def QA_SU_save_index_list(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_index_list(client=client)
 
 
-def QA_SU_save_etf_list(engine, client=DATABASE):
+def QA_SU_save_etf_list(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save etf_list
 
     Arguments:
@@ -111,11 +130,15 @@ def QA_SU_save_etf_list(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_etf_list(client=client)
 
 
-def QA_SU_save_future_list(engine, client=DATABASE):
+def QA_SU_save_future_list(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save future_list
 
     Arguments:
@@ -125,10 +148,16 @@ def QA_SU_save_future_list(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_future_list(client=client)
 
-def QA_SU_save_single_future_day(code, engine, client=DATABASE, paralleled=False):
+def QA_SU_save_single_future_day(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save single_future_day
 
     Arguments:
@@ -141,10 +170,18 @@ def QA_SU_save_single_future_day(code, engine, client=DATABASE, paralleled=False
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_single_future_day(code=code, client=client)
 
-def QA_SU_save_future_day(engine, client=DATABASE):
+def QA_SU_save_future_day(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save future_day
 
     Arguments:
@@ -154,11 +191,15 @@ def QA_SU_save_future_day(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_future_day(client=client)
 
 
-def QA_SU_save_future_day_all(engine, client=DATABASE):
+def QA_SU_save_future_day_all(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save future_day_all
 
     Arguments:
@@ -168,10 +209,15 @@ def QA_SU_save_future_day_all(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_future_day_all(client=client)
 
-def QA_SU_save_single_future_min(code, engine, client=DATABASE):
+def QA_SU_save_single_future_min(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save single_future_min
 
     Arguments:
@@ -181,10 +227,14 @@ def QA_SU_save_single_future_min(code, engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_single_future_min(code=code, client=client)
 
-def QA_SU_save_future_min(engine, client=DATABASE):
+def QA_SU_save_future_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save future_min
     Arguments:
         engine {[type]} -- [description]
@@ -193,11 +243,15 @@ def QA_SU_save_future_min(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_future_min(client=client)
 
 
-def QA_SU_save_future_min_all(engine, client=DATABASE):
+def QA_SU_save_future_min_all(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """[summary]
 
     Arguments:
@@ -207,12 +261,17 @@ def QA_SU_save_future_min_all(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_future_min_all(client=client)
 
 
 @print_used_time
-def QA_SU_save_stock_day(engine, client=DATABASE, paralleled=False):
+def QA_SU_save_stock_day(
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save stock_day
 
     Arguments:
@@ -224,11 +283,21 @@ def QA_SU_save_stock_day(engine, client=DATABASE, paralleled=False):
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_stock_day(client=client)
 
 
-def QA_SU_save_single_stock_day(code, engine, client=DATABASE, paralleled=False):
+def QA_SU_save_single_stock_day(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save stock_day
 
     Arguments:
@@ -241,109 +310,153 @@ def QA_SU_save_single_stock_day(code, engine, client=DATABASE, paralleled=False)
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_single_stock_day(code=code, client=client)
 
 
-def QA_SU_save_option_contract_list(engine, client=DATABASE):
+def QA_SU_save_option_contract_list(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine: 
     :param client: 
     :return: 
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_contract_list(client=client)
 
 
-def QA_SU_save_option_day_all(engine, client=DATABASE):
+def QA_SU_save_option_day_all(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_day_all(client=client)
 
 
-def QA_SU_save_option_min_all(engine, client=DATABASE):
+def QA_SU_save_option_min_all(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_min_all(client=client)
 
 
-def QA_SU_save_option_50etf_day(engine, client=DATABASE):
+def QA_SU_save_option_50etf_day(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_50etf_day(client=client)
 
 
-def QA_SU_save_option_50etf_min(engine, client=DATABASE):
+def QA_SU_save_option_50etf_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_50etf_min(client=client)
 
 
 
-def QA_SU_save_option_300etf_day(engine, client=DATABASE):
+def QA_SU_save_option_300etf_day(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_300etf_day(client=client)
 
 
-def QA_SU_save_option_300etf_min(engine, client=DATABASE):
+def QA_SU_save_option_300etf_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
 
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_300etf_min(client=client)
 
 
-def QA_SU_save_option_commodity_min(engine, client=DATABASE):
+def QA_SU_save_option_commodity_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_commodity_min(client=client)
 
 
-def QA_SU_save_option_commodity_day(engine, client=DATABASE):
+def QA_SU_save_option_commodity_day(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     '''
     :param engine:
     :param client:
     :return:
     '''
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_option_commodity_day(client=client)
 
 
-def QA_SU_save_stock_min(engine, client=DATABASE):
+def QA_SU_save_stock_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock_min
 
     Arguments:
@@ -353,11 +466,15 @@ def QA_SU_save_stock_min(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_stock_min(client=client)
 
 
-def QA_SU_save_stock_transaction(engine, client=DATABASE):
+def QA_SU_save_stock_transaction(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock_transaction
 
     Arguments:
@@ -367,11 +484,15 @@ def QA_SU_save_stock_transaction(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_stock_transaction(client=client)
 
 
-def QA_SU_save_index_transaction(engine, client=DATABASE):
+def QA_SU_save_index_transaction(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save index_transaction
 
     Arguments:
@@ -381,12 +502,17 @@ def QA_SU_save_index_transaction(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_index_transaction(client=client)
 
 
 
-def QA_SU_save_single_stock_min(code, engine, client=DATABASE):
+def QA_SU_save_single_stock_min(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock_min
 
     Arguments:
@@ -396,12 +522,17 @@ def QA_SU_save_single_stock_min(code, engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_single_stock_min(code=code, client=client)
 
 
 @print_used_time
-def QA_SU_save_index_day(engine, client=DATABASE, paralleled=False):
+def QA_SU_save_index_day(
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save index_day
 
     Arguments:
@@ -413,11 +544,21 @@ def QA_SU_save_index_day(engine, client=DATABASE, paralleled=False):
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_index_day(client=client)
 
 
-def QA_SU_save_single_index_day(code, engine, client=DATABASE, paralleled=False):
+def QA_SU_save_single_index_day(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save index_day
 
     Arguments:
@@ -430,11 +571,19 @@ def QA_SU_save_single_index_day(code, engine, client=DATABASE, paralleled=False)
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_single_index_day(code=code, client=client)
 
 
-def QA_SU_save_index_min(engine, client=DATABASE):
+def QA_SU_save_index_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save index_min
 
     Arguments:
@@ -444,11 +593,16 @@ def QA_SU_save_index_min(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_index_min(client=client)
 
 
-def QA_SU_save_single_index_min(code, engine, client=DATABASE):
+def QA_SU_save_single_index_min(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save index_min
 
     Arguments:
@@ -458,12 +612,17 @@ def QA_SU_save_single_index_min(code, engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_single_index_min(code=code, client=client)
 
 
 @print_used_time
-def QA_SU_save_etf_day(engine, client=DATABASE, paralleled=False):
+def QA_SU_save_etf_day(
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save etf_day
 
     Arguments:
@@ -473,11 +632,21 @@ def QA_SU_save_etf_day(engine, client=DATABASE, paralleled=False):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_etf_day(client=client)
 
 
-def QA_SU_save_single_etf_day(code, engine, client=DATABASE, paralleled=False):
+def QA_SU_save_single_etf_day(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save etf_day
 
     Arguments:
@@ -488,11 +657,19 @@ def QA_SU_save_single_etf_day(code, engine, client=DATABASE, paralleled=False):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_single_etf_day(code=code, client=client)
 
 
-def QA_SU_save_etf_min(engine, client=DATABASE):
+def QA_SU_save_etf_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save etf_min
 
     Arguments:
@@ -502,11 +679,16 @@ def QA_SU_save_etf_min(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_etf_min(client=client)
 
 
-def QA_SU_save_single_etf_min(code, engine, client=DATABASE):
+def QA_SU_save_single_etf_min(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save etf_min
 
     Arguments:
@@ -516,11 +698,15 @@ def QA_SU_save_single_etf_min(code, engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_single_etf_min(code=code, client=client)
 
 
-def QA_SU_save_stock_xdxr(engine, client=DATABASE):
+def QA_SU_save_stock_xdxr(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock_xdxr
 
     Arguments:
@@ -530,11 +716,15 @@ def QA_SU_save_stock_xdxr(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_stock_xdxr(client=client)
 
 
-def QA_SU_save_stock_block(engine, client=DATABASE):
+def QA_SU_save_stock_block(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save stock_block
 
     Arguments:
@@ -544,11 +734,15 @@ def QA_SU_save_stock_block(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_stock_block(client=client)
 
 
-def select_save_engine(engine, paralleled=False):
+def select_save_engine(
+    engine: str,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> ModuleType:
     '''
     select save_engine
     :param engine: 字符串Str
@@ -567,11 +761,15 @@ def select_save_engine(engine, paralleled=False):
         return sgm
     elif engine in ['jq', 'joinquant']:
         return sjq
+    elif engine in ['ths_http', 'ifind', 'ths']:
+        sths.configure_backend(backend)
+        sths.configure_parallel(paralleled)
+        return sths
     else:
-        print(
-            'QA Error QASU.main.py call select_save_engine '
-            'with parameter %s is None of tushare/ts/Tushare, tdx, gm, jq',
-            engine)
+        raise ValueError(
+            "QASU 不支持的数据源: "
+            f"{engine}; 可选 tushare/tdx/gm/jq/ths_http"
+        )
 
 
 def QA_SU_save_stock_min_5(file_dir, client=DATABASE):
@@ -636,15 +834,33 @@ def QA_SU_save_report_calendar_his():
     return save_financial_calendar.QA_SU_save_report_calendar_his()
 
 
-def QA_SU_save_stock_divyield_day():
-    return save_stock_divyield.QA_SU_save_stock_divyield_day()
+def QA_SU_save_stock_divyield_day(
+    engine: str = "ths_http",
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> object:
+    """保存股票分红送转数据。"""
+
+    save_engine = select_save_engine(engine, backend=backend)
+    return save_engine.QA_SU_save_stock_divyield_day(client=client)
 
 
-def QA_SU_save_stock_divyield_his():
-    return save_stock_divyield.QA_SU_save_stock_divyield_his()
+def QA_SU_save_stock_divyield_his(
+    engine: str = "ths_http",
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> object:
+    """保存历史股票分红送转数据。"""
+
+    save_engine = select_save_engine(engine, backend=backend)
+    return save_engine.QA_SU_save_stock_divyield_his(client=client)
 
 
-def QA_SU_save_bond_list(engine, client=DATABASE):
+def QA_SU_save_bond_list(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save bond_list
 
     Arguments:
@@ -654,12 +870,17 @@ def QA_SU_save_bond_list(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_bond_list(client=client)
 
 
 @print_used_time
-def QA_SU_save_bond_day(engine, client=DATABASE, paralleled=False):
+def QA_SU_save_bond_day(
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save bond_day
 
     Arguments:
@@ -671,11 +892,21 @@ def QA_SU_save_bond_day(engine, client=DATABASE, paralleled=False):
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_bond_day(client=client)
 
 
-def QA_SU_save_single_bond_day(code, engine, client=DATABASE, paralleled=False):
+def QA_SU_save_single_bond_day(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    paralleled: bool = False,
+    backend: str = "mongodb",
+) -> None:
     """save bond_day
 
     Arguments:
@@ -688,11 +919,19 @@ def QA_SU_save_single_bond_day(code, engine, client=DATABASE, paralleled=False):
     :param paralleled: 是否并行处理(default: {True})
     """
 
-    engine = select_save_engine(engine, paralleled=paralleled)
+    engine = select_save_engine(
+        engine,
+        paralleled=paralleled,
+        backend=backend,
+    )
     engine.QA_SU_save_single_bond_day(code=code, client=client)
 
 
-def QA_SU_save_bond_min(engine, client=DATABASE):
+def QA_SU_save_bond_min(
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save bond_min
 
     Arguments:
@@ -702,11 +941,16 @@ def QA_SU_save_bond_min(engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_bond_min(client=client)
 
 
-def QA_SU_save_single_bond_min(code, engine, client=DATABASE):
+def QA_SU_save_single_bond_min(
+    code: str,
+    engine: str,
+    client: object = DATABASE,
+    backend: str = "mongodb",
+) -> None:
     """save bond_min
 
     Arguments:
@@ -717,5 +961,5 @@ def QA_SU_save_single_bond_min(code, engine, client=DATABASE):
         client {[type]} -- [description] (default: {DATABASE})
     """
 
-    engine = select_save_engine(engine)
+    engine = select_save_engine(engine, backend=backend)
     engine.QA_SU_save_single_bond_min(code=code, client=client)

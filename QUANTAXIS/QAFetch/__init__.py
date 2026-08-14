@@ -49,9 +49,14 @@ QAFetch - QUANTAXIS 数据获取模块
 @license: MIT
 """
 
+from types import ModuleType
+from typing import Optional
+
 from QUANTAXIS.QAFetch import QATushare as QATushare
 from QUANTAXIS.QAFetch import QATdx as QATdx
 from QUANTAXIS.QAFetch import QAThs as QAThs
+from QUANTAXIS.QAFetch import QAThs_http as QAThsHttp
+from QUANTAXIS.QAFetch import QAEq as QAEq
 from QUANTAXIS.QAFetch import QACrawler as QACL
 from QUANTAXIS.QAFetch import QAEastMoney as QAEM
 from QUANTAXIS.QAFetch import QAHexun as QAHexun
@@ -62,7 +67,11 @@ from QUANTAXIS.QAFetch import QAKQ as QAKQ
 from QUANTAXIS.QAFetch import QABaostock as QABaostock
 
 
-def use(package):
+THS_HTTP_ALIASES = {"ths_http", "ifind"}
+EQ_ALIASES = {"eq", "everquotes", "EQ"}
+
+
+def use(package: str) -> Optional[ModuleType]:
 
     if package in ["tushare", "ts"]:
         return QATushare
@@ -72,16 +81,31 @@ def use(package):
         return QABaostock
     elif package in ["ths", "THS"]:
         return QAThs
+    elif package in THS_HTTP_ALIASES:
+        return QAThsHttp
+    elif package in EQ_ALIASES:
+        return QAEq
     elif package in ["HEXUN", "Hexun", "hexun"]:
         return QAHexun
     elif package in ["QA"]:
         return QAWEB
+    return None
 
 
 def QA_fetch_get_stock_day(
-    package, code, start, end, if_fq="00", level="day", type_="pd"
-):
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    if_fq: str = "00",
+    level: str = "day",
+    type_: str = "pd",
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES or package in EQ_ALIASES:
+        return Engine.QA_fetch_get_stock_day(code, start, end, if_fq)
     if package in ["ths", "THS", "wind"]:
         return Engine.QA_fetch_get_stock_day(code, start, end, if_fq)
     elif package in ["ts", "tushare"]:
@@ -104,24 +128,56 @@ def QA_fetch_get_trade_date(package, end, exchange):
     return Engine.QA_fetch_get_trade_date(end, exchange)
 
 
-def QA_fetch_get_stock_min(package, code, start, end, level='1min'):
+def QA_fetch_get_stock_min(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    level: str = "1min",
+) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if (
+        package in ['tdx', 'pytdx']
+        or package in THS_HTTP_ALIASES
+        or package in EQ_ALIASES
+    ):
         return Engine.QA_fetch_get_stock_min(code, start, end, level)
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_stock_transaction(package, code, start, end, retry=2):
+def QA_fetch_get_stock_transaction(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    retry: int = 2,
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_stock_transaction(code, start, end)
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_stock_transaction(code, start, end, retry)
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_index_transaction(package, code, start, end, retry=2):
+def QA_fetch_get_index_transaction(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    retry: int = 2,
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_index_transaction(code, start, end)
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_index_transaction(code, start, end, retry)
     else:
@@ -136,25 +192,47 @@ def QA_fetch_get_stock_transaction_realtime(package, code):
         return 'Unsupport packages'
 
 
-def QA_fetch_get_stock_xdxr(package, code):
+def QA_fetch_get_stock_xdxr(package: str, code: str) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_stock_xdxr([code])
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_stock_xdxr(code)
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_index_day(package, code, start, end, level='day'):
+def QA_fetch_get_index_day(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    level: str = "day",
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_index_day(code, start, end)
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_index_day(code, start, end, level)
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_index_min(package, code, start, end, level='1min'):
+def QA_fetch_get_index_min(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    level: str = "1min",
+) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in ['tdx', 'pytdx'] or package in THS_HTTP_ALIASES:
         return Engine.QA_fetch_get_index_min(code, start, end, level)
     else:
         return 'Unsupport packages'
@@ -165,17 +243,35 @@ def QA_fetch_get_index_realtime(package, code):
     return Engine.QA_fetch_get_index_realtime(code)
 
 
-def QA_fetch_get_bond_day(package, code, start, end, level='day'):
+def QA_fetch_get_bond_day(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    level: str = "day",
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_bond_day(code, start, end)
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_bond_day(code, start, end, level)
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_bond_min(package, code, start, end, level='1min'):
+def QA_fetch_get_bond_min(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    level: str = "1min",
+) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in ['tdx', 'pytdx'] or package in THS_HTTP_ALIASES:
         return Engine.QA_fetch_get_bond_min(code, start, end, level)
     else:
         return 'Unsupport packages'
@@ -186,16 +282,29 @@ def QA_fetch_get_bond_realtime(package, code):
     return Engine.QA_fetch_get_bond_realtime(code)
 
 
-def QA_fetch_get_stock_block(package):
+def QA_fetch_get_stock_block(package: str) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx', 'ths', 'tushare', 'QA']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in [
+        'tdx',
+        'pytdx',
+        'ths',
+        'tushare',
+        'QA',
+        *THS_HTTP_ALIASES,
+    ]:
         return Engine.QA_fetch_get_stock_block()
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_stock_info(package, code):
+def QA_fetch_get_stock_info(package: str, code: str) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_stock_info([code])
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_stock_info(code)
     else:
@@ -204,8 +313,15 @@ def QA_fetch_get_stock_info(package, code):
 # LIST
 
 
-def QA_fetch_get_stock_list(package, type_="stock"):
+def QA_fetch_get_stock_list(
+    package: str,
+    type_: str = "stock",
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_stock_list()
     if package in ["tdx", "pytdx"]:
         return Engine.QA_fetch_get_stock_list(type_)
     elif package in ["baostock", "bs", "bao"]:
@@ -215,32 +331,42 @@ def QA_fetch_get_stock_list(package, type_="stock"):
         return "Unsupport packages"
 
 
-def QA_fetch_get_bond_list(package):
+def QA_fetch_get_bond_list(package: str) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in ['tdx', 'pytdx'] or package in THS_HTTP_ALIASES:
         return Engine.QA_fetch_get_bond_list()
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_index_list(package):
+def QA_fetch_get_index_list(package: str) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in ['tdx', 'pytdx'] or package in THS_HTTP_ALIASES:
         return Engine.QA_fetch_get_index_list()
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_future_list(package,):
+def QA_fetch_get_future_list(package: str) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in ['tdx', 'pytdx'] or package in THS_HTTP_ALIASES:
         return Engine.QA_fetch_get_future_list()
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_option_list(package,):
+def QA_fetch_get_option_list(package: str) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_option_contract_list()
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_option_list()
     else:
@@ -346,17 +472,35 @@ def QA_fetch_get_future_realtime(package, code):
     return Engine.QA_fetch_get_future_realtime(code)
 
 
-def QA_fetch_get_future_day(package, code, start, end, frequence='day'):
+def QA_fetch_get_future_day(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    frequence: str = "day",
+) -> object:
     Engine = use(package)
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in THS_HTTP_ALIASES:
+        return Engine.QA_fetch_get_future_day(code, start, end)
     if package in ['tdx', 'pytdx']:
         return Engine.QA_fetch_get_future_day(code, start, end, frequence=frequence)
     else:
         return 'Unsupport packages'
 
 
-def QA_fetch_get_future_min(package, code, start, end, frequence='1min'):
+def QA_fetch_get_future_min(
+    package: str,
+    code: str,
+    start: str,
+    end: str,
+    frequence: str = "1min",
+) -> object:
     Engine = use(package)
-    if package in ['tdx', 'pytdx']:
+    if Engine is None:
+        raise ValueError(f"Unsupported package: {package}")
+    if package in ['tdx', 'pytdx'] or package in THS_HTTP_ALIASES:
         return Engine.QA_fetch_get_future_min(code, start, end, frequence=frequence)
     else:
         return 'Unsupport packages'
