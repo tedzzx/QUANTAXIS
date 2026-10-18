@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""用 ClickHouse 日线 + QARSAccount 跑均线股票回测。
+"""用 ClickHouse 日线 + QARSBacktest（qa-rs）跑均线股票回测。
 
-行情来自 ``quantaxis.stock_cn_day``（``QACKClient``）。账户使用
-``QARSAccount``（与 ``qarsbridge_example`` 相同 API）。不依赖 Mongo /
-RabbitMQ。
-
-策略对齐文档 SimpleMAStrategy：收盘价上穿 MA20 买入，下穿卖出；
-每日 ``settle()`` 处理 A 股 T+1。
+行情来自 ``quantaxis.stock_cn_day``，写成 qa-rs parquet 后交给
+``QARSBacktest.run``。策略在 ``on_calc`` 做 MA20 金叉死叉，下单走
+``QAMarket.target_amount``。不依赖 Mongo / RabbitMQ。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
 from qaenv import (  # type: ignore[import-untyped]
@@ -25,7 +25,8 @@ from qaenv import (  # type: ignore[import-untyped]
 )
 
 from QUANTAXIS.QAFetch.QAClickhouse import QACKClient, stock_format
-from QUANTAXIS.QARSBridge import QARSAccount, has_qars_support
+from QUANTAXIS.QARSBridge import QARSBacktest, QARSStrategy, has_qars_support
+from QUANTAXIS.QARSBridge.qars_backtest import write_qars_day_parquet
 
 MA_PERIOD: int = 20
 TRADE_SHARES: int = 1000
@@ -33,25 +34,7 @@ DEFAULT_INIT_CASH: float = 1_000_000.0
 DEFAULT_CODE: str = "000001"
 DEFAULT_START: str = "2025-01-01"
 DEFAULT_END: str = "2026-08-07"
-
-
-class StockAccount(Protocol):
-    """回测循环需要的账户接口。"""
-
-    def buy(self, code: str, price: float, date: str, amount: int) -> bool:
-        """买入。"""
-
-    def sell(self, code: str, price: float, date: str, amount: int) -> bool:
-        """卖出。"""
-
-    def settle(self, date: str | None = None) -> None:
-        """日终结算。"""
-
-    def get_positions(self) -> pd.DataFrame:
-        """当前持仓。"""
-
-    def get_account_info(self) -> dict[str, object]:
-        """账户资金摘要。"""
+ACCOUNT_NAME: str = "ma_cross"
 
 
 @dataclass(frozen=True)
@@ -66,18 +49,107 @@ class BacktestConfig:
     shares: int
 
 
-@dataclass
-class TradeCounts:
-    """成交计数。"""
+class MACrossStrategy(QARSStrategy):
+    """收盘价上穿 MA 买入、下穿卖出。"""
 
-    buy: int = 0
-    sell: int = 0
+    def __init__(
+        self,
+        data_path: str,
+        order_book_id: str,
+        init_cash: float,
+        ma_period: int,
+        shares: int,
+        account_name: str = ACCOUNT_NAME,
+    ) -> None:
+        """绑定行情文件与交易参数。
+
+        Args:
+            data_path: qa-rs parquet 路径。
+            order_book_id: ``000001.XSHE`` 形式代码。
+            init_cash: 初始资金。
+            ma_period: 均线周期。
+            shares: 每次买入股数。
+            account_name: qa-rs 账户名。
+        """
+
+        super().__init__(
+            data_path,
+            portfolio_name="clickhouse_day",
+            account_name=account_name,
+            init_cash=init_cash,
+        )
+        self.order_book_id = order_book_id
+        self.ma_period = ma_period
+        self.shares = shares
+        self.closes: list[float] = []
+
+    def on_calc(self) -> None:
+        """按当日截面更新均线并调仓。"""
+
+        raw = self.market.get_mkt_slice()
+        slice_map = json.loads(raw) if raw else {}
+        bar = slice_map.get(self.order_book_id)
+        if not isinstance(bar, dict):
+            return
+        close = float(bar.get("close", 0.0))
+        if close <= 0:
+            return
+        self.closes.append(close)
+        if len(self.closes) <= self.ma_period:
+            return
+
+        current_ma = sum(self.closes[-self.ma_period :]) / self.ma_period
+        prev_ma = sum(self.closes[-self.ma_period - 1 : -1]) / self.ma_period
+        prev_close = self.closes[-2]
+        cross_up = prev_close <= prev_ma and close > current_ma
+        cross_down = prev_close >= prev_ma and close < current_ma
+        today = str(getattr(self.market, "today", ""))
+
+        if cross_up and not self._holding():
+            self.market.target_amount(
+                {self.account_name: {self.order_book_id: float(self.shares)}},
+                "close",
+            )
+            self.buy_count += 1
+            print(
+                f"{today} BUY  {self.order_book_id} "
+                f"price={close:.2f} ma={current_ma:.2f} shares={self.shares}"
+            )
+        elif cross_down and self._holding():
+            self.market.target_amount(
+                {self.account_name: {self.order_book_id: 0.0}},
+                "close",
+            )
+            self.sell_count += 1
+            print(
+                f"{today} SELL {self.order_book_id} "
+                f"price={close:.2f} ma={current_ma:.2f}"
+            )
+
+    def _holding(self) -> bool:
+        """当前是否持有标的。"""
+
+        try:
+            positions = json.loads(self.market.get_positions_qifi(self.account_name))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(positions, dict):
+            return False
+        pos = positions.get(self.order_book_id)
+        if not isinstance(pos, dict):
+            return False
+        volume = float(pos.get("volume_long", 0.0) or 0.0)
+        if volume <= 0.0:
+            volume = float(pos.get("volume_long_his", 0.0) or 0.0) + float(
+                pos.get("volume_long_today", 0.0) or 0.0
+            )
+        return volume > 0.0
 
 
 def _parse_args() -> BacktestConfig:
     """解析命令行参数。"""
 
-    parser = argparse.ArgumentParser(description="ClickHouse 日线均线回测")
+    parser = argparse.ArgumentParser(description="ClickHouse 日线 + QARSBacktest 均线回测")
     parser.add_argument("--code", default=DEFAULT_CODE, help="六位股票代码")
     parser.add_argument("--start", default=DEFAULT_START, help="起始日期")
     parser.add_argument("--end", default=DEFAULT_END, help="结束日期")
@@ -110,18 +182,22 @@ def _parse_args() -> BacktestConfig:
     )
 
 
-def _bars_to_frame(data: object) -> pd.DataFrame:
-    """把 QACKClient 返回值整理成按日期排序的日线表。"""
+def _normalize_day_frame(data: object) -> pd.DataFrame:
+    """把 QACKClient 返回值整理成 qa-rs 日线表。"""
 
     if hasattr(data, "data"):
-        frame = pd.DataFrame(data.data).reset_index()
+        frame = pd.DataFrame(data.data)
     else:
-        frame = pd.DataFrame(data).reset_index()
+        frame = pd.DataFrame(data)
     if frame.empty:
-        return pd.DataFrame(columns=["date", "close", "open", "high", "low"])
-    frame["date"] = pd.to_datetime(frame["date"])
-    keep = [col for col in ("date", "open", "high", "low", "close", "volume") if col in frame.columns]
-    return frame.loc[:, keep].drop_duplicates(subset=["date"]).sort_values("date").reset_index(drop=True)
+        return pd.DataFrame()
+    frame = frame.reset_index()
+    frame = frame.loc[:, ~frame.columns.duplicated()]
+    if "order_book_id" not in frame.columns and "code" in frame.columns:
+        frame["order_book_id"] = frame["code"].astype(str)
+    if "date" not in frame.columns:
+        return pd.DataFrame()
+    return frame.drop_duplicates(subset=["date", "order_book_id"]).sort_values("date")
 
 
 def load_stock_day(
@@ -149,134 +225,36 @@ def load_stock_day(
         use_qfq = adj is not None and not adj.empty
     if use_qfq:
         raw = client.get_stock_day_qfq(code, start, end)
-        return _bars_to_frame(raw), "前复权 (stock_adj)"
+        return _normalize_day_frame(raw), "前复权 (stock_adj)"
     raw = client.get_stock_day(code, start, end)
-    return _bars_to_frame(raw), f"不复权 ({order_book_id})"
-
-
-def _long_volume(account: StockAccount, code: str) -> int:
-    """读取指定股票多头数量。"""
-
-    positions = account.get_positions()
-    if positions is None or positions.empty:
-        return 0
-    if "code" not in positions.columns:
-        return 0
-    matched = positions[positions["code"].astype(str) == code]
-    if matched.empty:
-        return 0
-    volume_col = "volume_long" if "volume_long" in matched.columns else None
-    if volume_col is None:
-        return 0
-    return int(matched.iloc[0][volume_col])
-
-
-def run_ma_backtest(
-    bars: pd.DataFrame,
-    account: StockAccount,
-    config: BacktestConfig,
-) -> TradeCounts:
-    """按日遍历 K 线，执行均线金叉死叉。
-
-    Args:
-        bars: 含 date/close 的日线。
-        account: QARS 账户。
-        config: 回测参数。
-
-    Returns:
-        买卖次数。
-    """
-
-    closes: pd.Series = bars["close"].astype(float)
-    ma: pd.Series = closes.rolling(config.ma_period).mean()
-    counts = TradeCounts()
-    holding: bool = False
-
-    for index in range(config.ma_period, len(bars)):
-        row = bars.iloc[index]
-        trade_date: str = pd.Timestamp(row["date"]).strftime("%Y-%m-%d")
-        price: float = float(row["close"])
-        current_ma: float = float(ma.iloc[index])
-        prev_close: float = float(closes.iloc[index - 1])
-        prev_ma: float = float(ma.iloc[index - 1])
-        if pd.isna(current_ma) or pd.isna(prev_ma):
-            account.settle(trade_date)
-            continue
-
-        cross_up: bool = prev_close <= prev_ma and price > current_ma
-        cross_down: bool = prev_close >= prev_ma and price < current_ma
-
-        if cross_up and not holding:
-            if account.buy(config.code, price, trade_date, config.shares):
-                counts.buy += 1
-                holding = True
-                print(
-                    f"{trade_date} BUY  {config.code} "
-                    f"price={price:.2f} ma={current_ma:.2f} shares={config.shares}"
-                )
-            else:
-                print(f"{trade_date} BUY 失败 price={price:.2f}")
-        elif cross_down and holding:
-            volume: int = _long_volume(account, config.code)
-            sell_shares: int = volume if volume > 0 else config.shares
-            if account.sell(config.code, price, trade_date, sell_shares):
-                counts.sell += 1
-                holding = False
-                print(
-                    f"{trade_date} SELL {config.code} "
-                    f"price={price:.2f} ma={current_ma:.2f} shares={sell_shares}"
-                )
-            else:
-                print(f"{trade_date} SELL 失败 price={price:.2f}")
-
-        account.settle(trade_date)
-        holding = _long_volume(account, config.code) > 0
-
-    return counts
-
-
-def _as_float(value: object, default: float) -> float:
-    """把账户字段转成 float，无法转换时用 default。"""
-
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return default
-    return default
+    return _normalize_day_frame(raw), f"不复权 ({order_book_id})"
 
 
 def _print_report(
     config: BacktestConfig,
     bars: pd.DataFrame,
     adj_note: str,
-    counts: TradeCounts,
-    account: StockAccount,
+    parquet_path: str,
+    result: dict[str, Any],
 ) -> None:
     """打印回测摘要。"""
 
-    info = account.get_account_info()
-    balance = _as_float(info.get("balance"), config.init_cash)
-    available = _as_float(info.get("available"), 0.0)
-    ret = (balance / config.init_cash - 1.0) * 100.0
+    balance = float(result.get("balance", config.init_cash))
+    available = float(result.get("available", 0.0))
+    ret = float(result.get("total_return", 0.0)) * 100.0
     print("==== 回测摘要 ====")
-    print(f"代码={config.code} 区间={config.start}..{config.end} 行情={adj_note}")
+    print(f"代码={stock_format(config.code)} 区间={config.start}..{config.end} 行情={adj_note}")
+    print(f"parquet={parquet_path}")
     print(f"K 线根数={len(bars)} MA={config.ma_period}")
     print(f"初始资金={config.init_cash:.2f}")
     print(f"期末权益={balance:.2f} 可用={available:.2f} 收益率={ret:.2f}%")
-    print(f"买入次数={counts.buy} 卖出次数={counts.sell}")
-    positions = account.get_positions()
-    if positions is None or positions.empty:
+    print(f"买入次数={result.get('buy', 0)} 卖出次数={result.get('sell', 0)}")
+    positions = result.get("positions") or {}
+    if not positions:
         print("持仓=空")
     else:
-        cols = [c for c in ("code", "volume_long", "open_price_long") if c in positions.columns]
-        print("持仓:")
-        print(positions[cols] if cols else positions)
-    if counts.buy == 0 and counts.sell == 0:
+        print(f"持仓={positions}")
+    if int(result.get("buy", 0)) == 0 and int(result.get("sell", 0)) == 0:
         print("区间内无信号")
 
 
@@ -285,8 +263,7 @@ def main() -> int:
 
     if not has_qars_support():
         print(
-            "本示例需要 QARSAccount.buy/sell（qars3）。"
-            "请执行: pip install quantaxis[rust]",
+            "本示例需要 qars3.Backtest。请执行: pip install -e /path/to/qa-rs",
             file=sys.stderr,
         )
         return 1
@@ -307,17 +284,26 @@ def main() -> int:
         return 1
 
     print(
-        f"已加载 {len(bars)} 根日线 {config.code} "
-        f"{bars['date'].iloc[0].date()}..{bars['date'].iloc[-1].date()} ({adj_note})"
+        f"已加载 {len(bars)} 根日线 {stock_format(config.code)} "
+        f"{pd.to_datetime(bars['date']).iloc[0].date()}.."
+        f"{pd.to_datetime(bars['date']).iloc[-1].date()} ({adj_note})"
     )
-    account: QARSAccount = QARSAccount(
-        account_cookie=f"ch_day_{config.code}",
-        portfolio="clickhouse_day",
+
+    handle, parquet_tmp = tempfile.mkstemp(prefix="qars_ch_day_", suffix=".pq")
+    os.close(handle)
+    parquet_path = write_qars_day_parquet(bars, parquet_tmp)
+    print(f"已写入 qa-rs parquet: {parquet_path}")
+
+    backtest = QARSBacktest(config.start, config.end, parquet_path)
+    strategy = MACrossStrategy(
+        data_path=parquet_path,
+        order_book_id=stock_format(config.code),
         init_cash=config.init_cash,
-        environment="backtest",
+        ma_period=config.ma_period,
+        shares=config.shares,
     )
-    counts = run_ma_backtest(bars, account, config)
-    _print_report(config, bars, adj_note, counts, account)
+    result = backtest.run(strategy)
+    _print_report(config, bars, adj_note, parquet_path, result)
     return 0
 
 

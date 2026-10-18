@@ -23,13 +23,30 @@ from QUANTAXIS.QAMarket.market_preset import MARKET_PRESET
 from QUANTAXIS.QAEngine.QAThreadEngine import QA_Thread
 from QUANTAXIS.QAUtil.QAParameter import MARKET_TYPE, RUNNING_ENVIRONMENT
 
+_STOCK_CODE_RE = re.compile(
+    r'(?i)^\d{6}(?:\.(?:XSHE|XSHG|XBEI|SH|SZ|BJ))?$'
+)
+
+
+def _infer_market_type(code):
+    """根据代码判断 A 股或期货。
+
+    ``000001`` / ``000001.XSHE`` 视为股票；含字母的期货合约视为期货。
+    """
+    text = str(code).strip()
+    if _STOCK_CODE_RE.match(text):
+        return MARKET_TYPE.STOCK_CN
+    if re.search(r'[a-zA-Z]+', text):
+        return MARKET_TYPE.FUTURE_CN
+    return MARKET_TYPE.STOCK_CN
+
 
 class QAStrategyCtaBase():
     def __init__(self, code='rb2005', frequence='1min', strategy_id='QA_STRATEGY', risk_check_gap=1, portfolio='default',
                  start='2020-01-01', end='2020-05-21', init_cash=1000000, send_wx=False,
                  data_host=eventmq_ip, data_port=eventmq_port, data_user=eventmq_username, data_password=eventmq_password,
                  trade_host=eventmq_ip, trade_port=eventmq_port, trade_user=eventmq_username, trade_password=eventmq_password,
-                 taskid=None, mongo_ip=mongo_ip, model='py'):
+                 taskid=None, mongo_ip=mongo_ip, model='py', source='clickhouse'):
         """
         code 可以传入单个标的 也可以传入一组标的(list)
         会自动基于code来判断是什么市场
@@ -70,6 +87,11 @@ class QAStrategyCtaBase():
 
         self.isupdate = False
         self.model = model
+        self.source = str(source or 'clickhouse').lower()
+        if self.source not in ('mongo', 'clickhouse'):
+            raise ValueError(
+                "source 仅支持 mongo/clickhouse，收到 {!r}".format(source))
+        self._market_source_actual = self.source
         self.new_data = {}
         self._systemvar = {}
         self._signal = []
@@ -81,12 +103,8 @@ class QAStrategyCtaBase():
             self.last_order_towards = dict(
                 zip(self.code, [{'BUY': '', 'SELL': ''} for i in range(len(self.code))]))
         self.dt = ''
-        if isinstance(self.code, str):
-            self.market_type = MARKET_TYPE.FUTURE_CN if re.search(
-                r'[a-zA-z]+', self.code) else MARKET_TYPE.STOCK_CN
-        else:
-            self.market_type = MARKET_TYPE.FUTURE_CN if re.search(
-                r'[a-zA-z]+', self.code[0]) else MARKET_TYPE.STOCK_CN
+        probe = self.code if isinstance(self.code, str) else self.code[0]
+        self.market_type = _infer_market_type(probe)
 
         self.bar_order = {'BUY_OPEN': 0, 'SELL_OPEN': 0,
                           'BUY_CLOSE': 0, 'SELL_CLOSE': 0}
@@ -180,10 +198,21 @@ class QAStrategyCtaBase():
 
     def run_backtest(self):
         self.debug()
-        self.acc.save()
+        save = getattr(self.acc, 'save', None)
+        if callable(save):
+            try:
+                save()
+            except Exception as exc:
+                print('account save skipped: {}'.format(exc))
+        else:
+            print('QIFI_Account 无 save()，以每日 settle→sync 写入 Mongo history')
 
-        risk = QA_Risk(self.acc)
-        risk.save()
+        try:
+            from QUANTAXIS.QAARP.QARisk import QA_Risk
+            risk = QA_Risk(self.acc)
+            risk.save()
+        except Exception as exc:
+            print('QA_Risk save skipped: {}'.format(exc))
 
         try:
             """add rank flow if exist
@@ -201,20 +230,113 @@ class QAStrategyCtaBase():
         """
         pass
 
+    def _is_day_frequence(self):
+        return str(self.frequence).lower() in ('day', 'd', '1d')
+
+    def _quotation_codes(self):
+        if isinstance(self.code, str):
+            return self.code.upper()
+        return self.code
+
+    def _init_qifi_account(self):
+        """创建本地 QIFI 回测账户，结果仍尝试写入 Mongo ``quantaxis.history``。"""
+        acc = QIFI_Account(
+            username=self.strategy_id,
+            password=self.strategy_id,
+            model='BACKTEST',
+            init_cash=self.init_cash,
+            trade_host=mongo_ip,
+            dbname='mongodb',
+        )
+        try:
+            acc.initial()
+        except Exception as exc:
+            print('QIFI Mongo 初始化失败，改用离线账户: {}'.format(exc))
+            acc.nodatabase = True
+            acc.initial()
+        return acc
+
+    def _init_backtest_account(self):
+        """回测账户：mongo 源优先 QA_User，失败或 clickhouse 源则用 QIFI。"""
+        self.acc = None
+        if self.source != 'clickhouse':
+            try:
+                qa_user_cls = getattr(QA, 'QA_User', None)
+                if qa_user_cls is not None:
+                    self.database = pymongo.MongoClient(mongo_ip).QUANTAXIS
+                    user = qa_user_cls(username=self.username, password=self.password)
+                    port = user.new_portfolio(self.portfolio)
+                    self.acc = port.new_accountpro(
+                        account_cookie=self.strategy_id,
+                        init_cash=self.init_cash,
+                        market_type=self.market_type,
+                        frequence=self.frequence)
+            except Exception as exc:
+                print('QA_User 账户创建失败，回退 QIFI_Account: {}'.format(exc))
+                self.acc = None
+        if self.acc is None:
+            self.acc = self._init_qifi_account()
+        if isinstance(self.code, str):
+            self.positions = self.acc.get_position(self.code)
+
+    def _load_mongo_bars(self):
+        """Mongo 行情；库空时 ``QA_quotation`` 会静默回退通达信。"""
+        codes = self._quotation_codes()
+        try:
+            if self._is_day_frequence():
+                data = QA.QA_fetch_stock_day_adv(codes, self.start, self.end)
+            else:
+                data = QA.QA_fetch_stock_min_adv(
+                    codes, self.start, self.end, frequence=self.frequence)
+            if data is not None and getattr(data, 'data', None) is not None and not data.data.empty:
+                self._market_source_actual = 'mongo'
+                return data
+        except Exception as exc:
+            print('Mongo 行情读取失败: {}'.format(exc))
+        print('WARNING: Mongo 无数据，QA_quotation 将回退通达信')
+        self._market_source_actual = 'tdx_fallback'
+        return QA.QA_quotation(
+            codes, self.start, self.end, source=QA.DATASOURCE.MONGO,
+            frequence=self.frequence, market=self.market_type,
+            output=QA.OUTPUT_FORMAT.DATASTRUCT)
+
+    def _load_clickhouse_bars(self):
+        """ClickHouse 行情；日线优先前复权。"""
+        from QUANTAXIS.QAFetch.QAClickhouse import QACKClient
+        client = QACKClient()
+        if self._is_day_frequence():
+            try:
+                data = client.get_stock_day_qfq_adv(self.code, self.start, self.end)
+                if data is None or getattr(data, 'data', None) is None or data.data.empty:
+                    raise ValueError('empty qfq')
+                self._market_source_actual = 'clickhouse_qfq'
+                return data
+            except Exception as exc:
+                print('get_stock_day_qfq 失败，改用 get_stock_day: {}'.format(exc))
+                data = client.get_stock_day(self.code, self.start, self.end)
+                self._market_source_actual = 'clickhouse_raw'
+                return data
+        freq = str(self.frequence).lower()
+        if freq.endswith('min'):
+            data = client.get_stock_min(
+                self.code, self.start, self.end, frequence=freq)
+            self._market_source_actual = 'clickhouse_min'
+            return data
+        raise ValueError('clickhouse 不支持 frequence={}'.format(self.frequence))
+
+    def _load_backtest_bars(self):
+        if self.source == 'clickhouse':
+            return self._load_clickhouse_bars()
+        return self._load_mongo_bars()
+
     def debug(self):
         self.running_mode = 'backtest'
-        self.database = pymongo.MongoClient(mongo_ip).QUANTAXIS
-        user = QA_User(username=self.username, password=self.password)
-        port = user.new_portfolio(self.portfolio)
-        self.acc = port.new_accountpro(
-            account_cookie=self.strategy_id, init_cash=self.init_cash, market_type=self.market_type, frequence=self.frequence)
-        self.positions = self.acc.get_position(self.code)
-
+        self._init_backtest_account()
         print(self.acc)
-        print(self.acc.market_type)
-        data = QA.QA_quotation(self.code.upper(), self.start, self.end, source=QA.DATASOURCE.MONGO,
-                               frequence=self.frequence, market=self.market_type, output=QA.OUTPUT_FORMAT.DATASTRUCT)
-
+        print(getattr(self.acc, 'market_type', self.market_type))
+        data = self._load_backtest_bars()
+        print('market source: {} ({}) bars={}'.format(
+            self.source, self._market_source_actual, len(data.data)))
         data.data.apply(self.x1, axis=1)
 
     def x1(self, item):
@@ -755,11 +877,25 @@ class QAStrategyCtaBase():
             self.bar_order['{}_{}'.format(direction, offset)] = self.bar_id
 
             if self.market_type == 'stock_cn':
-                order = self.acc.send_order(
-                    code=code, amount=volume, time=self.running_time, towards=towards, price=price)
-                order.trade(order.order_id, order.price,
-                            order.amount, order.datetime)
-                self.on_deal(order.to_dict())
+                if hasattr(self.acc, 'receive_simpledeal'):
+                    self.acc.receive_simpledeal(
+                        code=code, trade_time=self.running_time,
+                        trade_towards=towards, trade_amount=volume,
+                        trade_price=price, order_id=order_id)
+                    self.on_deal({
+                        'code': code,
+                        'trade_time': self.running_time,
+                        'trade_towards': towards,
+                        'trade_amount': volume,
+                        'trade_price': price,
+                        'order_id': order_id,
+                    })
+                else:
+                    order = self.acc.send_order(
+                        code=code, amount=volume, time=self.running_time, towards=towards, price=price)
+                    order.trade(order.order_id, order.price,
+                                order.amount, order.datetime)
+                    self.on_deal(order.to_dict())
             else:
                 self.acc.receive_simpledeal(
                     code=code, trade_time=self.running_time, trade_towards=towards, trade_amount=volume, trade_price=price, order_id=order_id, realorder_id=order_id, trade_id=order_id)

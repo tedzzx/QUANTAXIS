@@ -591,6 +591,7 @@ class QACKClient():
                        'volume', 'total_turnover']
         res = self.client.query_dataframe("SELECT * FROM quantaxis.index_cn_day  WHERE ((`date` >= '{}')) \
                          AND (`date` <= '{}') AND (`order_book_id` IN ({}))".format(start, end, "'{}'".format("','".join(codes)))).loc[:, columns_raw].drop_duplicates(['date', 'order_book_id'])
+        unscale_stock_prices(res)
         return QA_DataStruct_Index_day(res.assign(date=pd.to_datetime(res.date), code=res.order_book_id, amount=res.total_turnover).set_index(['date', 'code']).sort_index())
 
     def get_index_min(self, code, start, end, frequence: str = "1min"):
@@ -630,6 +631,7 @@ class QACKClient():
                 ).set_index(["datetime", "code"])
             )
         res = res.loc[:, columns_raw].drop_duplicates(['datetime', 'order_book_id'])
+        unscale_stock_prices(res)
         return QA_DataStruct_Index_min(res.assign(datetime=pd.to_datetime(res.datetime), code=res.order_book_id, amount=res.total_turnover, type=bar_type,).set_index(['datetime', 'code']).sort_index())
 
     def get_index_5min(self, code, start, end):
@@ -639,27 +641,73 @@ class QACKClient():
 
     def get_etf_day(self, code, start, end):
         codes = promise_list(code)
-        # if 'XS' not in codes[0]:
-        #     codes = pd.Series(codes).apply(
-        #         lambda x: x+'.XSHG' if x[0] != 6 else x+'.XSHE').tolist()
+        if codes and ".X" not in str(codes[0]):
+            codes = pd.Series(codes).apply(stock_format).tolist()
 
         columns_raw = ['date', 'order_book_id', 'num_trades', 'open', 'high', 'low', 'close',
                        'volume', 'total_turnover']
         res = self.client.query_dataframe("SELECT * FROM quantaxis.etf_cn_day  WHERE ((`date` >= '{}')) \
-                         AND (`date` <= '{}') AND (`order_book_id` IN ({}))".format(start, end, "'{}'".format("','".join(codes)))).loc[:, columns_raw].drop_duplicates(['date', 'order_book_id'])
+                         AND (`date` <= '{}') AND (`order_book_id` IN ({}))".format(start, end, "'{}'".format("','".join(codes))))
+        if res is None or getattr(res, "empty", True):
+            empty = pd.DataFrame(columns=columns_raw)
+            return QA_DataStruct_Index_day(
+                empty.assign(
+                    date=pd.to_datetime([]),
+                    code=pd.Series(dtype=str),
+                    amount=pd.Series(dtype=float),
+                ).set_index(["date", "code"])
+            )
+        res = res.loc[:, columns_raw].drop_duplicates(['date', 'order_book_id'])
+        unscale_stock_prices(res)
         return QA_DataStruct_Index_day(res.assign(date=pd.to_datetime(res.date), code=res.order_book_id, amount=res.total_turnover).set_index(['date', 'code']).sort_index())
 
-    def get_etf_min(self, code, start, end):
+    def get_etf_min(self, code, start, end, frequence: str = "1min"):
+        """读取 ETF 分钟线。
+
+        Args:
+            code: 证券代码或列表。
+            start: 起始时间。
+            end: 结束时间。
+            frequence: ``1min`` 或 ``5min``（对应 etf_cn_1min / etf_cn_5min）。
+        """
+
+        table_map = {
+            "1min": ("quantaxis.etf_cn_1min", "1min"),
+            "5min": ("quantaxis.etf_cn_5min", "5min"),
+        }
+        if frequence not in table_map:
+            raise ValueError(f"不支持的分钟频率: {frequence}，可选 {list(table_map)}")
+        table_name, bar_type = table_map[frequence]
         codes = promise_list(code)
-        # if 'XS' not in codes[0]:
-        #     codes = pd.Series(codes).apply(
-        #         lambda x: x+'.XSHG' if x[0] != 6 else x+'.XSHE').tolist()
+        if codes and ".X" not in str(codes[0]):
+            codes = pd.Series(codes).apply(stock_format).tolist()
 
         columns_raw = ['datetime', 'order_book_id',  'open',
                        'high', 'low', 'close', 'volume', 'total_turnover']
-        res = self.client.query_dataframe("SELECT * FROM quantaxis.etf_cn_1min  WHERE ((`datetime` >= '{}')) \
-                         AND (`datetime` <= '{}') AND (`order_book_id` IN ({}))".format(start, end, "'{}'".format("','".join(codes)))).loc[:, columns_raw].drop_duplicates(['datetime', 'order_book_id'])
-        return QA_DataStruct_Index_min(res.assign(datetime=pd.to_datetime(res.datetime), code=res.order_book_id, amount=res.total_turnover, type='1min',).set_index(['datetime', 'code']).sort_index())
+        res = self.client.query_dataframe(
+            "SELECT * FROM {} WHERE ((`datetime` >= '{}')) "
+            "AND (`datetime` <= '{}') AND (`order_book_id` IN ({}))".format(
+                table_name, start, end, "'{}'".format("','".join(codes))
+            )
+        )
+        if res is None or getattr(res, "empty", True):
+            empty = pd.DataFrame(columns=columns_raw)
+            return QA_DataStruct_Index_min(
+                empty.assign(
+                    datetime=pd.to_datetime([]),
+                    code=pd.Series(dtype=str),
+                    amount=pd.Series(dtype=float),
+                    type=bar_type,
+                ).set_index(["datetime", "code"])
+            )
+        res = res.loc[:, columns_raw].drop_duplicates(['datetime', 'order_book_id'])
+        unscale_stock_prices(res)
+        return QA_DataStruct_Index_min(res.assign(datetime=pd.to_datetime(res.datetime), code=res.order_book_id, amount=res.total_turnover, type=bar_type,).set_index(['datetime', 'code']).sort_index())
+
+    def get_etf_5min(self, code, start, end):
+        """读取 ETF 5 分钟线（``quantaxis.etf_cn_5min``）。"""
+
+        return self.get_etf_min(code, start, end, frequence="5min")
 
     def get_lof_day(self, code, start, end):
         codes = promise_list(code)

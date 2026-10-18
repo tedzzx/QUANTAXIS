@@ -114,10 +114,20 @@ class QA_Position():
                  **kwargs
 
                  ):
-        if '.' in code:
-            self.code = code.split('.')[1]
+        raw_code = str(code)
+        if '.' in raw_code:
+            left, right = raw_code.split('.', 1)
+            stock_exchanges = {
+                'XSHE', 'XSHG', 'XBEI', 'SH', 'SZ', 'BJ', 'SSE', 'SZSE', 'STOCK_CN',
+            }
+            if left.isdigit() and right.upper() in stock_exchanges:
+                self.code = left
+            elif right.isdigit() and left.upper() in stock_exchanges:
+                self.code = right
+            else:
+                self.code = right
         else:
-            self.code = code
+            self.code = raw_code
 
         self.market_preset = MARKET_PRESET().get_code(self.code)
 
@@ -144,9 +154,11 @@ class QA_Position():
         self.name = name
 
         if market_type is None:
-
-            self.market_type = MARKET_TYPE.FUTURE_CN if re.search(
-                r'[a-zA-z]+', self.code) else MARKET_TYPE.STOCK_CN
+            if str(self.code).isdigit():
+                self.market_type = MARKET_TYPE.STOCK_CN
+            else:
+                self.market_type = MARKET_TYPE.FUTURE_CN if re.search(
+                    r'[a-zA-Z]+', self.code) else MARKET_TYPE.STOCK_CN
         self.exchange_id = self.market_preset['exchange'] if exchange_id == None else exchange_id
 
         self.volume_long_his = volume_long_his
@@ -875,12 +887,14 @@ class QA_Position():
             
         elif self.market_type == MARKET_TYPE.STOCK_CN:
             value = trade_price * trade_amount
-            if trade_towards == ORDER_DIRECTION.BUY_OPEN:
+            if trade_towards in [ORDER_DIRECTION.BUY_OPEN, ORDER_DIRECTION.BUY]:
                 """买入万 2 滑点"""
                 commission_fee = value *  0.0002
             else:
                 """卖出千 1.3 手续费+ 万 2 滑点"""
                 commission_fee = value *  0.0015
+        else:
+            commission_fee = 0.0
 
         return commission_fee
 

@@ -322,11 +322,14 @@ def quotes_to_ch_rows(
     *,
     data_type: str,
     default_code: str = "",
+    order_book_id: str = "",
 ) -> list[tuple]:
     """将 getSync JSON 转为 ClickHouse 行元组（无 DataFrame）。
 
     day 行: (date, order_book_id, open, high, low, close, volume, total_turnover)
     min 行: (datetime, order_book_id, open, high, low, close, volume, total_turnover)
+
+    ``order_book_id`` 非空时整批行都写这个合约代码，供指数保留 .XSHG/.XSHE/.INDX。
     """
 
     rows: list[tuple] = []
@@ -352,7 +355,7 @@ def quotes_to_ch_rows(
         close = _as_price_int(close_v if close_v is not None else 0)
         volume = _as_int(payload.get("113", 0))
         amount = _as_int(payload.get("114", 0))
-        order_book_id = stock_format(plain)
+        book_id = order_book_id or stock_format(plain)
 
         if is_day:
             try:
@@ -360,25 +363,25 @@ def quotes_to_ch_rows(
             except ValueError:
                 skipped_bad_time += 1
                 continue
-            key = (moment, order_book_id)
+            key = (moment, book_id)
             if key in seen:
                 continue
             seen.add(key)
             rows.append(
-                (moment, order_book_id, open_, high, low, close, volume, amount)
+                (moment, book_id, open_, high, low, close, volume, amount)
             )
         else:
             time_v = payload.get("4", 0)
-            moment = _eq_datetime(date_v, time_v)
-            if moment is None:
+            bar_time = _eq_datetime(date_v, time_v)
+            if bar_time is None:
                 skipped_bad_time += 1
                 continue
-            key = (moment, order_book_id)
+            key = (bar_time, book_id)
             if key in seen:
                 continue
             seen.add(key)
             rows.append(
-                (moment, order_book_id, open_, high, low, close, volume, amount)
+                (bar_time, book_id, open_, high, low, close, volume, amount)
             )
 
     if skipped_bad_time:
@@ -707,23 +710,46 @@ def fetch_stock_day_rows(
     codes: str | Sequence[str],
     start: str,
     end: str,
+    *,
+    market: str = "",
+    order_book_id: str = "",
 ) -> list[tuple]:
-    """拉取日线并返回 CH 行元组（可多代码，需同市场）。"""
+    """拉取日线并返回 ClickHouse 行元组。
+
+    多代码必须属于同一 K 线市场。指数传入 ``market`` 与 ``order_book_id``，
+    避免六位代码被格式化成股票后缀。``order_book_id`` 只允许单代码。
+
+    Args:
+        codes: 一只或多只证券代码。
+        start: 起始日期。
+        end: 结束日期。
+        market: EQ 市场 ID。空则按股票规则推断。
+        order_book_id: 写入行的合约代码。空则按股票规则格式化。
+
+    Returns:
+        日线元组列表。
+    """
 
     code_list = [codes] if isinstance(codes, str) else list(codes)
     if not code_list:
         return []
-    markets = {eq_market_for_code(code) for code in code_list}
-    if len(markets) != 1:
-        raise EqConfigError(
-            f"fetch_stock_day_rows 要求同市场代码，收到: {sorted(markets)}"
-        )
-    market = next(iter(markets))
-    quotes = _get_sync_range(market, "kl1D", code_list, start, end)
+    if order_book_id and len(code_list) != 1:
+        raise EqConfigError("指定 order_book_id 时只能拉一只代码")
+    if market:
+        market_id = market
+    else:
+        markets = {eq_market_for_code(code) for code in code_list}
+        if len(markets) != 1:
+            raise EqConfigError(
+                f"fetch_stock_day_rows 要求同市场代码，收到: {sorted(markets)}"
+            )
+        market_id = next(iter(markets))
+    quotes = _get_sync_range(market_id, "kl1D", code_list, start, end)
     return quotes_to_ch_rows(
         quotes,
         data_type="day",
         default_code=code_list[0],
+        order_book_id=order_book_id,
     )
 
 
@@ -732,15 +758,30 @@ def fetch_stock_min_rows(
     start: str,
     end: str,
     frequence: str = "5min",
+    *,
+    market: str = "",
+    order_book_id: str = "",
 ) -> list[tuple]:
-    """区间一次 getSync 拉取分钟线，返回 CH 行元组（不再按日循环）。"""
+    """区间一次 getSync 拉取分钟线，返回 ClickHouse 行元组。
+
+    Args:
+        code: 证券代码。
+        start: 起始时间。
+        end: 结束时间。
+        frequence: ``1min`` 或 ``5min``。
+        market: EQ 市场 ID。空则按股票规则推断。
+        order_book_id: 写入行的合约代码。空则按股票规则格式化。
+
+    Returns:
+        分钟线元组列表。
+    """
 
     quote_type = _FREQ_QUOTE_TYPE.get(frequence)
     if quote_type is None:
         raise EqConfigError(f"不支持的分钟频率: {frequence}")
 
     plain = _plain_code(code)
-    market = eq_market_for_code(plain)
+    market_id = market or eq_market_for_code(plain)
     start_ts = pd.Timestamp(start)
     end_ts = pd.Timestamp(end)
 
@@ -750,8 +791,13 @@ def fetch_stock_min_rows(
     while spans:
         c_start, c_end = spans.pop(0)
         try:
-            quotes = _get_sync_range(market, quote_type, [plain], c_start, c_end)
-            part = quotes_to_ch_rows(quotes, data_type=frequence, default_code=plain)
+            quotes = _get_sync_range(market_id, quote_type, [plain], c_start, c_end)
+            part = quotes_to_ch_rows(
+                quotes,
+                data_type=frequence,
+                default_code=plain,
+                order_book_id=order_book_id,
+            )
             if part:
                 rows.extend(part)
         except Exception as exc:  # noqa: BLE001

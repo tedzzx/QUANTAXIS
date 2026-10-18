@@ -76,6 +76,222 @@ def _clickhouse_client() -> clickhouse_driver.Client:
     )
 
 
+# 股票 / ETF / 指数 K 线。价格 Int32 = 元 × 10000，成交量与成交额 Int64（股 / 元）。
+_BAR_TABLE_KIND = {
+    "stock_cn_day": "day",
+    "etf_cn_day": "day",
+    "index_cn_day": "day",
+    "stock_cn_1min": "min",
+    "stock_cn_5min": "min",
+    "etf_cn_1min": "min",
+    "etf_cn_5min": "min",
+    "index_cn_1min": "min",
+    "index_cn_5min": "min",
+}
+_CODELIST_TABLES = frozenset({"stock_cn_codelist", "etf_cn_codelist"})
+_DAY_INSERT_COLUMNS = frozenset(
+    {
+        "date",
+        "order_book_id",
+        "num_trades",
+        "limit_up",
+        "limit_down",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "total_turnover",
+    }
+)
+_MIN_INSERT_COLUMNS = frozenset(
+    {
+        "datetime",
+        "order_book_id",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "total_turnover",
+    }
+)
+_BAR_CLIENT: Optional[clickhouse_driver.Client] = None
+
+_DAY_BAR_DDL = """
+CREATE TABLE IF NOT EXISTS quantaxis.{table} (
+    date Date,
+    order_book_id LowCardinality(String),
+    num_trades Int64 CODEC(ZSTD(3)),
+    limit_up Int32 CODEC(ZSTD(3)),
+    limit_down Int32 CODEC(ZSTD(3)),
+    open Int32 CODEC(ZSTD(3)),
+    high Int32 CODEC(ZSTD(3)),
+    low Int32 CODEC(ZSTD(3)),
+    close Int32 CODEC(ZSTD(3)),
+    volume Int64 CODEC(ZSTD(3)),
+    total_turnover Int64 CODEC(ZSTD(3))
+) ENGINE = ReplacingMergeTree()
+PARTITION BY toYYYYMM(date)
+ORDER BY (date, order_book_id)
+SETTINGS index_granularity = 8192
+"""
+
+_MIN_BAR_DDL = """
+CREATE TABLE IF NOT EXISTS quantaxis.{table} (
+    datetime DateTime CODEC(DoubleDelta, ZSTD(3)),
+    order_book_id LowCardinality(String),
+    open Int32 CODEC(ZSTD(3)),
+    high Int32 CODEC(ZSTD(3)),
+    low Int32 CODEC(ZSTD(3)),
+    close Int32 CODEC(ZSTD(3)),
+    volume Int64 CODEC(ZSTD(3)),
+    total_turnover Int64 CODEC(ZSTD(3))
+) ENGINE = ReplacingMergeTree()
+PARTITION BY toYYYYMM(datetime)
+ORDER BY (order_book_id, datetime)
+SETTINGS index_granularity = 8192
+"""
+
+
+def bar_client() -> clickhouse_driver.Client:
+    """复用一条 ClickHouse 连接，供建表、增量水位和插入使用。"""
+
+    global _BAR_CLIENT
+    if _BAR_CLIENT is None:
+        _BAR_CLIENT = _clickhouse_client()
+    return _BAR_CLIENT
+
+
+def bar_table_ddl(table: str) -> str:
+    """返回股票、ETF 或指数 K 线表的建表语句。"""
+
+    kind = _BAR_TABLE_KIND.get(table)
+    if kind == "day":
+        return _DAY_BAR_DDL.format(table=table)
+    if kind == "min":
+        return _MIN_BAR_DDL.format(table=table)
+    raise ValueError(f"不支持的 K 线表: {table}")
+
+
+def _bar_table_exists(table: str) -> bool:
+    rows = bar_client().execute(
+        "SELECT count() FROM system.tables "
+        "WHERE database = 'quantaxis' AND name = %(table)s",
+        {"table": table},
+    )
+    return bool(rows and rows[0][0])
+
+
+def _open_column_type(table: str) -> str:
+    rows = bar_client().execute(f"DESCRIBE TABLE quantaxis.{table}")
+    for row in rows:
+        if row and row[0] == "open":
+            return str(row[1])
+    return ""
+
+
+def ensure_bar_table(table: str) -> None:
+    """创建股票、ETF 或指数 K 线表。
+
+    价格列已是整数的表保持不动。空的浮点价格表按定点语句重建。
+    表里已有浮点行情时拒绝删除。
+    """
+
+    ddl = bar_table_ddl(table)
+    if not _bar_table_exists(table):
+        bar_client().execute(ddl)
+        return
+    open_type = _open_column_type(table)
+    if open_type.startswith("Int"):
+        return
+    count = bar_client().execute(f"SELECT count() FROM quantaxis.{table}")[0][0]
+    if count:
+        raise RuntimeError(
+            f"quantaxis.{table} 价格列为 {open_type} 且已有 {count} 行，拒绝重建"
+        )
+    bar_client().execute(f"DROP TABLE quantaxis.{table}")
+    bar_client().execute(ddl)
+
+
+def codes_from_list(table: str) -> list[str]:
+    """从股票或 ETF 码表读取六位代码。"""
+
+    if table not in _CODELIST_TABLES:
+        raise ValueError(f"不支持的码表: {table}")
+    rows = bar_client().execute(
+        f"SELECT DISTINCT order_book_id FROM quantaxis.{table} "
+        "WHERE order_book_id != '' ORDER BY order_book_id"
+    )
+    codes = sorted({str(row[0]).split(".")[0] for row in rows if row and row[0]})
+    if not codes:
+        raise RuntimeError(f"quantaxis.{table} 为空")
+    return codes
+
+
+def latest_bar(table: str, code: str, time_field: str) -> Optional[pd.Timestamp]:
+    """查询一只证券在 K 线表中的最新时间；没有记录时返回 None。"""
+
+    if table not in _BAR_TABLE_KIND:
+        raise ValueError(f"不支持的 K 线表: {table}")
+    if time_field not in {"date", "datetime"}:
+        raise ValueError(f"不支持的时间字段: {time_field}")
+    from QUANTAXIS.QAFetch.QAClickhouse import stock_format
+
+    normalized = str(code).strip().upper()
+    # stock_format 不保留 .INDX，中证指数必须原样查询。
+    if normalized.endswith(".INDX"):
+        order_book_id = normalized
+    else:
+        order_book_id = stock_format(code)
+    rows = bar_client().execute(
+        f"SELECT max({time_field}) FROM quantaxis.{table} "
+        "WHERE order_book_id = %(order_book_id)s",
+        {"order_book_id": order_book_id},
+    )
+    if not rows or rows[0][0] is None:
+        return None
+    stamp = pd.Timestamp(rows[0][0])
+    if stamp.year < 1990:
+        return None
+    return stamp
+
+
+def insert_bar_rows(
+    table: str,
+    rows: list[tuple],
+    columns: list[str] | tuple[str, ...],
+    *,
+    batch_size: int = 20000,
+) -> int:
+    """把已经是 ×10000 整数的 K 线元组写入标准表。"""
+
+    if table not in _BAR_TABLE_KIND:
+        raise ValueError(f"不支持的 K 线表: {table}")
+    if not rows:
+        return 0
+    allowed = (
+        _DAY_INSERT_COLUMNS if _BAR_TABLE_KIND[table] == "day" else _MIN_INSERT_COLUMNS
+    )
+    column_list = [str(column) for column in columns]
+    unknown = [column for column in column_list if column not in allowed]
+    if unknown:
+        raise ValueError(f"{table} 不接受列: {unknown}")
+    sql = f"INSERT INTO quantaxis.{table} ({', '.join(column_list)}) VALUES"
+    size = max(1, int(batch_size))
+    client = bar_client()
+    # 日线一次可能跨几十年。按月拆开，避免单次 INSERT 超过分区上限。
+    buckets: dict[int, list[tuple]] = {}
+    for row in rows:
+        stamp = pd.Timestamp(row[0])
+        buckets.setdefault(stamp.year * 100 + stamp.month, []).append(row)
+    for key in sorted(buckets):
+        part = buckets[key]
+        for offset in range(0, len(part), size):
+            client.execute(sql, part[offset : offset + size])
+    return len(rows)
+
+
 def _clean_secret(value: str) -> str:
     """去掉首尾空白与成对引号，避免 ini 里 license=\"...\" 带入引号。"""
 
@@ -360,46 +576,10 @@ class datamodelx:
                 """
 
                 # 价格 Int32×10000（毫）；volume/成交额 Int64（股/元）
-                query = "CREATE TABLE IF NOT EXISTS \
-                `quantaxis`.`{}` (\
-                    date Date DEFAULT '1970-01-01',\
-                        order_book_id LowCardinality(String),\
-                        num_trades Int64 CODEC(ZSTD(3)),\
-                        limit_up Int32 CODEC(ZSTD(3)),\
-                        limit_down Int32 CODEC(ZSTD(3)),\
-                        open Int32 CODEC(ZSTD(3)),\
-                        high Int32 CODEC(ZSTD(3)),\
-                        low Int32 CODEC(ZSTD(3)),\
-                        close Int32 CODEC(ZSTD(3)),\
-                        volume Int64 CODEC(ZSTD(3)),\
-                        total_turnover Int64 CODEC(ZSTD(3))\
-                    )\
-                    ENGINE = ReplacingMergeTree() \
-                    PARTITION BY (toYYYYMM(`date`)) \
-                    ORDER BY (date, order_book_id)\
-                    SETTINGS index_granularity=8192".format(self.table_name)
+                query = bar_table_ddl(self.table_name)
             elif 'index' in self.market:
-
-                """
-                'order_book_id', 'date', 'total_turnover', 'num_trades', 'open', 'low',
-                'high', 'volume', 'close'
-                """
-                query = "CREATE TABLE IF NOT EXISTS \
-                `quantaxis`.`{}` (\
-                    date Date DEFAULT '1970-01-01',\
-                        order_book_id String,\
-                        num_trades Float64,\
-                        open Float64,\
-                        high Float64,\
-                        low Float64,\
-                        close Float64,\
-                        volume Float64,\
-                        total_turnover Float64\
-                    )\
-                    ENGINE = ReplacingMergeTree() \
-                    PARTITION BY (toYYYYMM(`date`)) \
-                    ORDER BY (date, order_book_id)\
-                    SETTINGS index_granularity=8192".format(self.table_name)
+                # 与股票日线相同的定点列。价格 Int32 = 元 × 10000。
+                query = bar_table_ddl(self.table_name)
             elif 'future' in self.market:
 
                 """                
@@ -454,28 +634,9 @@ class datamodelx:
                     SETTINGS index_granularity=8192".format(self.table_name)
             elif 'etf' in self.market:
                 """
-                ['order_book_id', 'date', 'limit_up', 'high', 'iopv', 'open', 'low',
-                'num_trades', 'close', 'volume', 'total_turnover', 'limit_down']
+                与股票日线相同的定点列。EQ K 线没有 iopv。
                 """
-                query = "CREATE TABLE IF NOT EXISTS \
-                `quantaxis`.`{}` (\
-                    date Date DEFAULT '1970-01-01',\
-                        order_book_id String,\
-                        limit_up  Float64,\
-                        limit_down  Float64,\
-                        iopv Float64,\
-                        num_trades Float64,\
-                        open Float64,\
-                        high Float64,\
-                        low Float64,\
-                        close Float64,\
-                        volume Float64,\
-                        total_turnover Float64\
-                    )\
-                    ENGINE = ReplacingMergeTree() \
-                    PARTITION BY (toYYYYMM(`date`)) \
-                    ORDER BY (date, order_book_id)\
-                    SETTINGS index_granularity=8192".format(self.table_name)
+                query = bar_table_ddl(self.table_name)
             elif 'option' in self.market:
                 """
                 ['order_book_id', 'date', 'limit_up', 'contract_multiplier',
@@ -514,43 +675,11 @@ class datamodelx:
                    'volume', 'close']
                 """
 
-                # 价格 Int32×10000；volume/成交额 Int64；按月分区与 5min 对齐
-                query = "CREATE TABLE IF NOT EXISTS \
-                `quantaxis`.`{}` (\
-                    datetime DateTime CODEC(DoubleDelta, ZSTD(3)),\
-                        order_book_id LowCardinality(String),\
-                        open Int32 CODEC(ZSTD(3)),\
-                        high Int32 CODEC(ZSTD(3)),\
-                        low Int32 CODEC(ZSTD(3)),\
-                        close Int32 CODEC(ZSTD(3)),\
-                        volume Int64 CODEC(ZSTD(3)),\
-                        total_turnover Int64 CODEC(ZSTD(3))\
-                    )\
-                    ENGINE = ReplacingMergeTree() \
-                    PARTITION BY (toYYYYMM(`datetime`)) \
-                    ORDER BY (order_book_id, datetime)\
-                    SETTINGS index_granularity=8192".format(self.table_name)
+                # 价格 Int32×10000；volume/成交额 Int64；按月分区。1min 与 5min 同结构。
+                query = bar_table_ddl(self.table_name)
             elif 'index' in self.market:
-
-                """
-                'order_book_id', 'date', 'total_turnover', 'num_trades', 'open', 'low',
-                'high', 'volume', 'close'
-                """
-                query = "CREATE TABLE IF NOT EXISTS \
-                `quantaxis`.`{}` (\
-                    datetime Datetime DEFAULT '1970-01-01',\
-                        order_book_id String,\
-                        open Float64,\
-                        high Float64,\
-                        low Float64,\
-                        close Float64,\
-                        volume Float64,\
-                        total_turnover Float64\
-                    )\
-                    ENGINE = ReplacingMergeTree() \
-                    PARTITION BY (toYYYYMMDD(`datetime`)) \
-                    ORDER BY (datetime, order_book_id)\
-                    SETTINGS index_granularity=8192".format(self.table_name)
+                # 与股票分钟线相同的定点列，覆盖 index_cn_1min 与 index_cn_5min。
+                query = bar_table_ddl(self.table_name)
 
             elif 'future' in self.market:
 
@@ -599,27 +728,10 @@ class datamodelx:
                     ORDER BY (datetime, order_book_id)\
                     SETTINGS index_granularity=8192".format(self.table_name)
             elif 'etf' in self.market:
-
-                """                
-                ['order_book_id', 'datetime', 'high', 'iopv', 'open', 'low', 'close',
-                    'volume', 'total_turnover'],
                 """
-                query = "CREATE TABLE IF NOT EXISTS \
-                `quantaxis`.`{}` (\
-                    datetime Datetime DEFAULT '1970-01-01',\
-                        order_book_id String,\
-                        iopv Float64,\
-                        open Float64,\
-                        high Float64,\
-                        low Float64,\
-                        close Float64,\
-                        volume Float64,\
-                        total_turnover Float64\
-                    )\
-                    ENGINE = ReplacingMergeTree() \
-                    PARTITION BY (toYYYYMMDD(`datetime`)) \
-                    ORDER BY (datetime, order_book_id)\
-                    SETTINGS index_granularity=8192".format(self.table_name)
+                与股票分钟线相同的定点列，覆盖 etf_cn_1min 与 etf_cn_5min。
+                """
+                query = bar_table_ddl(self.table_name)
             elif 'lof' in self.market:
 
                 """                

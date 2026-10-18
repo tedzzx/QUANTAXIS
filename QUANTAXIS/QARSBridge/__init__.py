@@ -25,6 +25,7 @@ __version__ = "2.1.0.alpha1"
 __all__ = [
     'QARSAccount',
     'QARSBacktest',
+    'QARSStrategy',
     'has_qars_support',
     'HAS_QARS',
 ]
@@ -77,7 +78,7 @@ def has_qars_support() -> bool:
 if HAS_QARS:
     # 使用Rust实现
     from .qars_account import QARSAccount
-    from .qars_backtest import QARSBacktest
+    from .qars_backtest import QARSBacktest, QARSStrategy
 
     # 打印性能提示
     import sys
@@ -94,6 +95,13 @@ else:
         def __init__(self, *args, **kwargs):
             raise ImportError(
                 "QARSBacktest 需要 qars3。安装: pip install quantaxis[rust]"
+            )
+
+    class QARSStrategy:
+        """占位类: 策略需安装qars3。"""
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "QARSStrategy 需要 qars3。安装: pip install quantaxis[rust]"
             )
 
     import sys

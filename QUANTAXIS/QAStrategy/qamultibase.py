@@ -16,8 +16,8 @@ import QUANTAXIS as QA
 
 from QUANTAXIS.QAEngine.QAThreadEngine import QA_Thread
 from QUANTAXIS.QAUtil.QAParameter import MARKET_TYPE, RUNNING_ENVIRONMENT, ORDER_DIRECTION
-from QAPUBSUB.consumer import subscriber_topic,  subscriber_routing
-from QAPUBSUB.producer import publisher_routing
+from QUANTAXIS.QAPubSub.consumer import subscriber_routing, subscriber_topic
+from QUANTAXIS.QAPubSub.producer import publisher_routing
 from QUANTAXIS.QAStrategy.qactabase import QAStrategyCtaBase
 from QUANTAXIS.QIFI.QifiAccount import QIFI_Account
 
@@ -25,18 +25,19 @@ from QUANTAXIS.QIFI.QifiAccount import QIFI_Account
 class QAStrategyStockBase(QAStrategyCtaBase):
 
     def __init__(self, code=['000001'], frequence='1min', strategy_id='QA_STRATEGY', risk_check_gap=1, portfolio='default',
-                 start='2019-01-01', end='2019-10-21', send_wx=False, market_type='stock_cn',
+                 start='2019-01-01', end='2019-10-21', init_cash=1000000, send_wx=False, market_type='stock_cn',
                  data_host=eventmq_ip, data_port=eventmq_port, data_user=eventmq_username, data_password=eventmq_password,
                  trade_host=eventmq_ip, trade_port=eventmq_port, trade_user=eventmq_username, trade_password=eventmq_password,
-                 taskid=None, mongo_ip=mongo_ip):
+                 taskid=None, mongo_ip=mongo_ip, source='clickhouse'):
         super().__init__(code=code, frequence=frequence, strategy_id=strategy_id, risk_check_gap=risk_check_gap, portfolio=portfolio,
-                         start=start, end=end, send_wx=send_wx,
+                         start=start, end=end, init_cash=init_cash, send_wx=send_wx,
                          data_host=eventmq_ip, data_port=eventmq_port, data_user=eventmq_username, data_password=eventmq_password,
                          trade_host=eventmq_ip, trade_port=eventmq_port, trade_user=eventmq_username, trade_password=eventmq_password,
-                         taskid=taskid, mongo_ip=mongo_ip)
+                         taskid=taskid, mongo_ip=mongo_ip, source=source)
 
         self.code = code
         self.send_wx = send_wx
+        self.market_type = MARKET_TYPE.STOCK_CN if market_type is None else market_type
 
     def subscribe_data(self, code, frequence, data_host, data_port, data_user, data_password):
         """[summary]
@@ -105,11 +106,21 @@ class QAStrategyStockBase(QAStrategyCtaBase):
     def _debug_sim(self):
         self.running_mode = 'sim'
 
-        self._old_data = QA.QA_fetch_stock_min(self.code, QA.QA_util_get_last_day(
-            QA.QA_util_get_real_date(str(datetime.date.today()))), str(datetime.datetime.now()), format='pd', frequence=self.frequence).set_index(['datetime', 'code'])
+        if getattr(self, 'source', 'clickhouse') == 'clickhouse':
+            from QUANTAXIS.QAFetch.QAClickhouse import QACKClient
+            start = QA.QA_util_get_last_day(
+                QA.QA_util_get_real_date(str(datetime.date.today())))
+            end = str(datetime.datetime.now())
+            data = QACKClient().get_stock_min(
+                self.code, start, end, frequence=self.frequence)
+            self._old_data = data.data.loc[:, [
+                'open', 'high', 'low', 'close', 'volume']]
+        else:
+            self._old_data = QA.QA_fetch_stock_min(self.code, QA.QA_util_get_last_day(
+                QA.QA_util_get_real_date(str(datetime.date.today()))), str(datetime.datetime.now()), format='pd', frequence=self.frequence).set_index(['datetime', 'code'])
 
-        self._old_data = self._old_data.loc[:, [
-            'open', 'high', 'low', 'close', 'volume']]
+            self._old_data = self._old_data.loc[:, [
+                'open', 'high', 'low', 'close', 'volume']]
 
         self.database = pymongo.MongoClient(mongo_ip).QAREALTIME
 
@@ -141,19 +152,12 @@ class QAStrategyStockBase(QAStrategyCtaBase):
 
     def debug(self):
         self.running_mode = 'backtest'
-        # self.database = pymongo.MongoClient(mongo_ip).QUANTAXIS
-        # user = QA_User(username="admin", password='admin')
-        # port = user.new_portfolio(self.portfolio)
-        # self.acc = port.new_accountpro(
-        #     account_cookie=self.strategy_id, init_cash=self.init_cash, market_type=self.market_type, frequence= self.frequence)
-        # #self.positions = self.acc.get_position(self.code)
-
-        # print(self.acc)
-
-        # print(self.acc.market_type)
-        data = QA.QA_quotation(self.code, self.start, self.end, source=QA.DATASOURCE.MONGO,
-                               frequence=self.frequence, market=self.market_type, output=QA.OUTPUT_FORMAT.DATASTRUCT)
-
+        self._init_backtest_account()
+        print(self.acc)
+        print(getattr(self.acc, 'market_type', self.market_type))
+        data = self._load_backtest_bars()
+        print('market source: {} ({}) bars={}'.format(
+            self.source, self._market_source_actual, len(data.data)))
         data.data.apply(self.x1, axis=1)
 
     def update_account(self):

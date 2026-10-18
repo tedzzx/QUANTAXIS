@@ -691,6 +691,11 @@ class QIFI_Account():
         return self.money
 
     @property
+    def cash_available(self):
+        """兼容 QAStrategyCtaBase.get_cash 回测路径。"""
+        return self.available
+
+    @property
     def margin(self):
         """保证金
         """
@@ -887,6 +892,31 @@ class QIFI_Account():
                               trade_amount=order["volume_left"], trade_towards=order["towards"],
                               order_id=order['order_id'], trade_id=str(uuid.uuid4()))
 
+    def receive_simpledeal(self, code, trade_time, trade_towards, trade_amount, trade_price,
+                           order_id='', realorder_id=None, trade_id=None, message=None):
+        """回测快捷成交：先报单再立刻成交。"""
+        order = self.send_order(
+            code=code,
+            amount=trade_amount,
+            price=trade_price,
+            towards=trade_towards,
+            order_id=order_id or '',
+            datetime=str(trade_time) if trade_time is not None else '',
+        )
+        if not order:
+            return False
+        return self.receive_deal(
+            code=code,
+            trade_price=trade_price,
+            trade_amount=trade_amount,
+            trade_towards=trade_towards,
+            trade_time=str(trade_time),
+            message=message,
+            order_id=order.get('order_id', order_id),
+            trade_id=trade_id,
+            realorder_id=realorder_id,
+        )
+
     def receive_deal(self,
                      code,
                      trade_price,
@@ -995,11 +1025,11 @@ class QIFI_Account():
             return self.market_preset.get_exchange(code) + '.' + code
 
     def on_price_change(self, code, price, datetime=None):
-        code = self.format_code(code)
+        pos_code = self.format_code(code)
 
-        if code in self.positions.keys():
+        if pos_code in self.positions.keys():
             try:
-                pos = self.get_position(code.split('.')[1])
+                pos = self.positions[pos_code]
                 if pos.last_price == price:
                     pass
                 else:
